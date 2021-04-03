@@ -1,0 +1,493 @@
+---
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+---
+title: "Social Mobility and Voter Turnout"
+author: "Charles Ryan"
+date: "3/21/2021"
+output: html_document
+-----------------------------------------------------------------------------------------------------------------------
+library(readxl)
+library(tidyverse)
+library(dplyr)
+require(dplyr)
+library(ggplot2)
+library(eeptools)
+library(stargazer)
+library(psych)
+library(hamlet)
+library(ggridges)
+library(lattice)
+library(sjPlot)
+library(lme4)
+-----------------------------------------------------------------------------------------------------------------------
+This is the R code for my honors thesis, which explores voter turnout in Pennsylvania as a function of social mobility. The voter data comes from Pennsylvania's voter export file, a publication of the Department of State that includes the voting records for every registered voter in Pennsylvania for 40 elections since the late 1990s. This analysis is focused on the 2008, 2012, and 2016 presidential elections. The data on social mobility is drawn from the Opportunity Insights Project, a research institute based at Harvard University whose researchers focus on identifying barriers to economic opportunity. 
+
+The first half of this code was focused on merging the unique voter files for all 67 counties in Pennsylvania. Due to the way the data is collected, the columns for the elections are not consistent across the 67 text files, so I had to merge them according to a legend I made that associated each column with the elections of interest. The final dataset includes 8 million observations. 
+
+#read in election codes, which includes data on elections and the corresponding columns for each text file 
+```
+Election_Codes <- read_excel("~/Desktop/Election Codes.xlsx", sheet = "real election codes") 
+```
+#arrange Election_Codes by County and Election in ascending order 
+```
+sortedElection_Codes <- arrange(Election_Codes, County, Election)
+```
+#add vector of unique counties
+```
+counties <- unique(sortedElection_Codes$County)
+ex_counties <- counties[1:67]
+```
+
+#read in the Adams County data to make sure this merging process will work
+ADAMS_VOTE <- read.delim("ADAMS FVE 20210118.txt", header=FALSE)
+colnames(ADAMS_VOTE)
+#Create empty list for loop below and identify columns of interest: County, Name, and voter record for 08, 12, and 16 primary and general elections
+```
+mylist <- list()
+my_main_columns <- c(152,1,3,4,8,9,12)
+```
+
+#for every integer from 1 to the length of the vector ex_counties....
+```
+for (i in 1:length(ex_counties)) {
+  #create a string variable called file_name by concatenating the i-th element in the vector (e.g. "ADAMS" with the standard text string)
+  file_name <- paste(ex_counties[i], " FVE 20210118.txt", sep ="")
+  #read in your file using file_name
+  file <- read.delim(file_name, header = FALSE)
+  #get the columns of interest for the particular county
+  code_df <- filter(sortedElection_Codes, County == ex_counties[i])
+  county_columns <- as.vector(as.matrix(code_df[,c("ColumnVote","ColumnParty")]))
+  #subset that file
+  column_filter <- c(my_main_columns, all_of(county_columns))
+  file <- select(file, all_of(column_filter))
+  names(file) <- c("County", "IDNumber", "LastName", "FirstName", "DOB", "RegistrationDate", "PartyCode", "2008General", "2008Primary", "2012General", "2012Primary", "2016General", "2016Primary", "2008GeneralParty", "2008PrimaryParty", "2012GeneralParty", "2012PrimaryParty", "2016GeneralParty", "2016PrimaryParty")
+  
+  mylist[[i]] <- file
+}
+```
+
+#Combine voter files into one data frame
+```
+mydata <- do.call("rbind", mylist)
+mydataframe <- as.data.frame(mydata)
+```
+
+#rename dataframe and begin creating variables from the voter file data
+```
+update_dataframe <- as.data.frame(mydata)
+```
+#classify RegistrationDate as date
+```
+update_dataframe$RegistrationDate <- as.Date(update_dataframe$RegistrationDate, format = "%m/%d/%Y")
+```
+#Next thing is to write the age variable such that I exclude voters who were inelgible to vote for any of the elections included in this analysis 
+#I also need to distinguish between those who did not vote and those who were inelgible. Did not vote is coded as 0 and ineligble is coded as NA
+
+#convert DOB to Date 
+```
+update_dataframe$DOB <- as.Date(update_dataframe$DOB , format = "%m/%d/%Y")
+```
+#create data variables for the date of each election and convert to Date 
+##2008
+```
+election_08 <- "11/04/2008"
+election_08_date <- as.Date(election_08, format = "%m/%d/%Y")
+```
+#subset to see how many people have birthdates after the election of interest. These voters are removed from the dataset
+```
+subset(update_dataframe, election_08_date < update_dataframe$DOB)
+```
+
+##2012
+```
+election_12 <- "11/06/2012"
+election_12_date <- as.Date(election_12, format = "%m/%d/%Y")
+```
+# subset to see how many people have birthdates after the election of interest. Cross check with the subset above to see if it is the same voters (it is)
+```
+subset(update_dataframe, election_12_date < update_dataframe$DOB)
+```
+
+##2016 
+```
+election_16 <- "11/08/2016"
+election_16_date <- as.Date(election_16, format = "%m/%d/%Y")
+```
+#subset to see how many people have birthdates after the election of interest
+```
+subset(update_dataframe, election_16_date < update_dataframe$DOB)
+```
+
+##emove people in subset since the subsets for each election are the same
+#store data excluding voters whose birthdates are after the election in a new data frame
+```
+new_data <- update_dataframe[-c(160344, 811130, 5301482, 7666312, 8454844, 8779560),]
+```
+
+#create age variables 
+#classify date as "Date" 
+```
+new_data$DOB <- as.Date(new_data$DOB , format = "%m/%d/%Y")
+class(new_data$DOB)
+```
+#reclassify registration date as "Date"
+```
+new_data$RegistrationDate <- as.Date(new_data$RegistrationDate, format = "%m/%d/%Y")
+class(new_data$RegistrationDate)
+```
+#Age at 2008 Election 
+```
+new_data$Age_08 <- (election_08_date - new_data$DOB)/365
+new_data$Age_08 <- as.numeric(new_data$Age_08)
+new_data$Age_08 <- floor(new_data$Age_08)
+```
+
+#Age at 2012 Election
+```
+new_data$Age_12 <- (election_12_date - new_data$DOB)/365
+new_data$Age_12 <- as.numeric(new_data$Age_12)
+new_data$Age_12 <- floor(new_data$Age_12)
+```
+
+#Age at 2016 Election
+```
+new_data$Age_16 <- (election_16_date - new_data$DOB)/365
+new_data$Age_16 <- as.numeric(new_data$Age_16)
+new_data$Age_16 <- floor(new_data$Age_16)
+```
+
+#create party variables: Independent and Democrat. Republicans are the comparison group 
+```
+new_data$Independent <- ifelse(new_data$PartyCode%in%c("R","D"), 0, 1)
+new_data$Democrat <- ifelse(new_data$PartyCode=="D", 1, 0)
+```
+
+
+#Create vote data. In the original text files, votes are indicated by AP (at polls), AB (absentee), MB (mail ballot) and P (provisional) and non votes/ineligible voters are classified as blanks. I create Vote variables for each election by classifying AP, AB, MB, and P as 1, ineligible votes as NA, and non votes as 0 
+##Conditions
+###RegistrationDate < Election Date 
+###if RegistrationDate > Election, NA
+###if AP, AB, MB, or P, 1 
+###if missing, 0 
+
+#Create Vote_08, which assigns 1 to voters, 0 to non voters, and NA to those who did not register to vote before election day
+#check subset to see if the code indeed excludes voters whose registration date > election date
+```
+new_data <- new_data %>%  
+  mutate(new_data, Vote_08 = ifelse(RegistrationDate > election_08_date, NA, 
+                                    ifelse(`2008General` == "AP", 1, 
+                                           ifelse(`2008General` == "AB", 1,
+                                                  ifelse(`2008General` == "MB", 1,
+                                                         ifelse(`2008General` == "P", 1, 0))))))
+
+subset(new_data, new_data$RegistrationDate > election_08_date)
+```
+##Create Vote_12, which is coded exactly as Vote_08 described above
+```
+new_data <- new_data %>%  
+  mutate(new_data, Vote_12 = ifelse(RegistrationDate > election_12_date, NA, 
+                                    ifelse(`2012General` == "AP", 1, 
+                                           ifelse(`2012General` == "AB", 1,
+                                                  ifelse(`2012General` == "MB", 1,
+                                                         ifelse(`2012General` == "P", 1, 0))))))
+subset(new_data, new_data$RegistrationDate > election_12_date)
+```
+
+##Create Vote_16, which is coded the same way as Vote_12 and Vote_08
+```
+new_data <- new_data %>% 
+  mutate(new_data, Vote_16 = ifelse(RegistrationDate > election_16_date, NA, 
+                                    ifelse(`2016General` == "AP", 1, 
+                                           ifelse(`2016General` == "AB", 1,
+                                                  ifelse(`2016General` == "MB", 1,
+                                                         ifelse(`2016General` == "P", 1, 0))))))
+subset(new_data, new_data$RegistrationDate > election_16_date)
+```
+
+#remove voters for which Vote_08, Vote_12 and Vote_16 are NA
+```
+new_data <- new_data[rowSums(is.na(new_data[,26:28]))!=3,]
+```
+
+#Create dummy variables for age cohorts. 35-44 is the comparison group because it is the largest age cohort in PA
+#2016
+## 18 - 24
+```
+new_data <- new_data %>%  
+  mutate(new_data, age_16_cohort_1 = ifelse(Age_16 %in% 18:24, 1, 0))
+  ```
+## 24 - 29
+```
+new_data <- new_data %>% 
+  mutate(new_data, age_16_cohort_2 = ifelse(Age_16 %in% 25:34, 1, 0))
+  ```
+## 45-54
+```
+new_data <- new_data %>% 
+  mutate(new_data, age_16_cohort_3 = ifelse(Age_16 %in% 45:54, 1, 0))
+  ```
+## 55-59
+```
+new_data <- new_data %>% 
+  mutate(new_data, age_16_cohort_4 = ifelse(Age_16 %in% 55:59, 1, 0))
+  ```
+## 60-64
+```
+new_data <- new_data %>% 
+  mutate(new_data, age_16_cohort_5 = ifelse(Age_16 %in% 60:64, 1, 0))
+  ```
+## 65-74
+```
+new_data <- new_data %>% 
+  mutate(new_data, age_16_cohort_6 = ifelse(Age_16 %in% 65:74, 1, 0))
+  ```
+## 75 and up
+```
+new_data <- new_data %>% 
+  mutate(new_data, age_16_cohort_7 = ifelse(Age_16 > 75, 1, 0))
+  ```
+
+#remove some columns that are no longer necessary 
+```
+revised_data=subset(new_data, select = -c(`2008General`, `2012General`, `2016General`, `2008GeneralParty`, `2008PrimaryParty`, `2012GeneralParty`, `2012PrimaryParty`, `2016GeneralParty`, `2016PrimaryParty`))
+```
+
+#Create vote variable for primary elections using same process as above
+#First classify primary election dates as "Date"
+```
+primary_election_08 <- "04/22/2008"
+primary_election_08 <- as.Date(primary_election_08, format = "%m/%d/%Y")
+primary_election_12 <- "04/24/2012"
+primary_election_12 <- as.Date(primary_election_12, format = "%m/%d/%Y")
+primary_election_16 <- "04/26/2016" 
+primary_election_16 <- as.Date(primary_election_16, format = "%m/%d/%Y")
+```
+
+#2008 Primary
+```
+revised_data <- revised_data %>% 
+  mutate(revised_data, primary_vote_08 = ifelse(RegistrationDate > primary_election_08, NA, 
+                                                ifelse(`2008Primary` == "AP", 1, 
+                                                       ifelse(`2008Primary` == "AB", 1,
+                                                              ifelse(`2008Primary` == "MB", 1,
+                                                                     ifelse(`2008Primary` == "P", 1, 0))))))
+                                                                     ```
+
+#2012 Primary
+```
+revised_data <- revised_data %>% 
+  mutate(revised_data, primary_vote_12 = ifelse(RegistrationDate > primary_election_12, NA, 
+                                                ifelse(`2012Primary` == "AP", 1, 
+                                                       ifelse(`2012Primary` == "AB", 1,
+                                                              ifelse(`2012Primary` == "MB", 1,
+                                                                     ifelse(`2012Primary` == "P", 1, 0))))))
+                                                                     ```
+#2016 Primary
+```
+revised_data <- revised_data %>% 
+  mutate(revised_data, primary_vote_16 = ifelse(RegistrationDate > primary_election_16, NA, 
+                                                ifelse(`2016Primary` == "AP", 1, 
+                                                       ifelse(`2016Primary` == "AB", 1,
+                                                              ifelse(`2016Primary` == "MB", 1,
+                                                                     ifelse(`2016Primary` == "P", 1, 0))))))
+                                                                     ```
+
+#remove some columns 
+```
+analysis_data=subset(revised_data, select = -c(`2008Primary`, `2012Primary`, `2016Primary`))
+```
+
+
+
+
+#Create dependent variable
+#My dependent variable, voter turnout, is measured as the proportion of elections in which an eligible voter cast a ballot
+#I create the variable by summing Vote_08, Vote_12 and Vote_16 and dividing by three. I exclude NAs from the calculation process because I want voters who were eligible to vote in one election and voted in one election to receive  the same score as someone who was eligible to vote in three elections and voted in all three 
+```
+analysis_data$vote_total <- rowSums(analysis_data[,c("Vote_08", "Vote_12", "Vote_16")], na.rm=TRUE)
+analysis_data$vote_prop <- analysis_data$vote_total/3
+```
+
+#Create primary vote proportion variable using same method
+```
+analysis_data$primary_vote_total <- rowSums(analysis_data[,c("primary_vote_08", "primary_vote_12", "primary_vote_16")], na.rm=TRUE)
+analysis_data$primary_prop <- analysis_data$primary_vote_total/3
+```
+
+#Merge social mobility and voter data
+```
+thesis_data <- merge(analysis_data, mobility, all=TRUE)
+```
+
+#create histogram of dependent variable 
+```
+vote_prop_hist <- hist(thesis_data$vote_prop, main = "Distribution of Turnout Patterns at Voter-level", xlab = "Proportion of Elections Voted", ylab = "Frequency", col= "grey")
+```
+
+#Correlations between main variables  
+#correlations level 1 and dependent 
+```
+cor.test(thesis_data$vote_prop, thesis_data$Independent, method="pearson")
+cor.test(thesis_data$vote_prop, thesis_data$Democrat, method="pearson")
+cor.test(thesis_data$vote_prop, thesis_data$Age_16, method = "pearson")
+cor.test(thesis_data$vote_prop, thesis_data$primary_prop, method = "pearson")
+```
+
+#level 2 and independent variables 
+```
+cor.test(thesis_data$vote_prop, thesis_data$e_rank_b, method = "pearson")
+cor.test(thesis_data$vote_prop, thesis_data$ann_avg_job_growth, method = "pearson")
+cor.test(thesis_data$vote_prop, thesis_data$D_prop, method = "pearson")
+cor.test(thesis_data$vote_prop, thesis_data$R_prop, method = "pearson")
+```
+
+#correlation matrix for ease
+```
+corr.matrix <- sjt.corr(thesis_data[,c("Republican", "Democrat", "Age_16", "primary_prop", "e_rank_b", "ann_avg_job_growth", "D_prop", "R_prop")], method="pearson", file="sjt_corr.doc")
+```
+
+
+
+
+#scatterplot voter turnout variable and social mobility 
+```
+mobility_plot_1 <- ggplot(thesis_data, aes(x=e_rank_b, y=vote_prop)) + geom_point(alpha=0.5)
+mobility_plot_1 + ggtitle("Plot of Social Mobility and Voter Turnout") + xlab("Social Mobility") + ylab("Voter Turnout")
+```
+
+#Create ridgeline plot of county and voter turnout to see distribution of dependent variable in each PA county
+```
+vote_prop_ridge <- ggplot(thesis_data, aes(x = vote_prop, y = County)) + geom_density_ridges2(fill="skyblue1")
+vote_prop_ridge + theme(axis.text = element_text(size = 5)) + 
+  ggtitle("Voter Turnout Density Distributions by County") + xlab("Voter Turnout") + ylab("County")
+  ```
+
+#This analysis employs HLM. I specify county as a random factor and investigate social mobility as a random effect. To ensure that this is the right approach, I implement several models, each of which is specified more fully 
+
+#Model 1 - Standard Linear Model
+```
+linear_1 <- lm(vote_prop ~ e_rank_b, data = thesis_data)
+summary(linear_1)
+linear_1_table <- stargazer(linear_1, type = "text", style = "ajps", flip = TRUE, title = "Table 1: Simple Classical Regression, Ignoring County", out="table2.txt")
+```
+#Model 2 - identify fixed effects for each county by including factor(County)
+```
+linear_2 <- lm(vote_prop ~ e_rank_b + factor(County), data = thesis_data)
+summary(linear_2)
+linear_2_table <- stargazer(linear_2, type = "text", style = "ajps", flip = TRUE, title = "Table 2: Simple Classical Regression with County Indicators", out="table2.txt")
+```
+
+#Move into multilevel analysis
+
+#Model 1
+##regular OLS regression with county fixed effects
+##I use this model to calculate the intraclass correlation coefficient, which tells me how much of the total variation in voter turnout occurs at the county level (2.7%) 
+```
+mod_1 <- lmer(vote_prop ~ 1 + (1 | County), REML = FALSE, data = thesis_data)
+summary(mod_1)
+sjstats::icc(mod_1)
+ranef(mod_1)
+dotplot(ranef(mod_1, condVar=TRUE), cex.lab=.00002)
+class(mod_1) <- "lmerMod"
+mod_1_table <- stargazer(mod_1, type = "html", style="ajps", flip=TRUE, column.labels="Voter Turnout", title = "Table 2: Unconditional Random Effects", out="intercept_table.doc")
+```
+#this tells us that 2.7% of variability takes place at the County Level.
+#ICC is greater than zero, which suggests that multilevel analysis is the correct approach
+
+#Random Intercept Model with social mobility (e_rank_b) and county as random factor 
+```
+mod_1_mobility <- lmer(vote_prop ~ e_rank_b + (1|County), data=thesis_data)
+summary(mod_1_mobility)
+```
+
+#Model 2
+##add level 1 predictors: this will tell us the impact of level 1 predictors on vote_prop while controlling for variation in vote_prop by county
+```
+mod_2_mobility <- lmer(vote_prop~ e_rank_b + Independent + Democrat + age_16_cohort_1 + age_16_cohort_2 + age_16_cohort_3 + age_16_cohort_4 + age_16_cohort_5 + age_16_cohort_6 + age_16_cohort_7 + primary_prop + (1|County), REML = FALSE, data = thesis_data)
+summary(mod_2_mobility)
+class(mod_2_mobility) <- "lmerMod"
+stargazer(mod_2_mobility, type = "html", style = "ajps", title = "Random Intercept Model With Predictors", out = "randomintercept.doc")
+```
+#use anova to compare model fits 
+```
+anovacomparison <- anova(mod_2_mobility, mod_3)
+```
+##adding the random slope does improve the fit over the random intercept model 
+
+#format regression tables
+```
+stargazer(anovacomparison, type = "html", style = "ajps", title = "Anova Fit Comparison: Random Intercept Model vs. Random Slope", out = "anovatable.doc")
+```
+
+#Model 3 - Varying Slope and Intercept Model 
+#specify social mobility (e_rank_b) as having a varying slope, which essentially means that the effect of social mobility on voter turnout is distinct for each county. In other words, this provides the interaction between county and social mobility. I am interested in a the effects of place in structuring turnout patterns, and this model allows me to approximate that effect 
+
+```
+mod_3 <- lmer(vote_prop ~ Independent + Democrat +  primary_prop + e_rank_b + age_16_cohort_1 + age_16_cohort_2 + age_16_cohort_3 + age_16_cohort_4 + age_16_cohort_5 + age_16_cohort_6 + age_16_cohort_7 + (1+e_rank_b|County), REML = FALSE, data = thesis_data)
+summary(mod_3)
+class(mod_3) <- "lmerMod"
+ranef(mod_3)
+mem.plotran(mod_3)
+mod_3_table <- stargazer(mod_3, type = "html", style="ajps", flip=TRUE, column.labels="Voter Turnout", title = "Table 2: Models without and with Absolute Mobility cross-level interaction", out="table_3_table.doc")
+```
+
+#Model 3 + Interaction Effects
+##In this model, I include cross-level interactions between social mobility and Democrat, Independent, and each of the age cohorts
+```
+mod_3_interation <- lmer(vote_prop ~  e_rank_b + e_rank_b*Independent + e_rank_b*Democrat + primary_prop + age_16_cohort_1*e_rank_b + age_16_cohort_2*e_rank_b + age_16_cohort_3*e_rank_b + age_16_cohort_4*e_rank_b + age_16_cohort_5*e_rank_b + age_16_cohort_6*e_rank_b + age_16_cohort_7*e_rank_b  + (1+e_rank_b|County), REML = FALSE, data = thesis_data)
+summary(mod_3_interation)
+class(mod_3_interation) <- "lmerMod"
+```
+#format and combine regression tables for model 3 and model 3 with interaction effects 
+```
+mod_3_tables <- stargazer(mod_3, mod_3_interation, type = "html", style="ajps", flip=TRUE, column.labels="Voter Turnout", title = "Table 2: Models without and with Absolute Mobility cross-level interaction", out="table_3__final_table.doc")
+```
+
+#Graph interaction effects between social mobility and Independent/Democrat
+#Indepndnet Interaction
+
+#find standard deviation for social mobility (e_rank_b)
+```
+describe(thesis_data$e_rank_b)
+e_rank_mean <- mean(thesis_data$e_rank_b, na.rm=TRUE)
+```
+#use effects to create interaction effects for two levels of social mobility (plus one and minus one standard deviation)
+```
+e_rank_b <- effect(term="e_rank_b*Independent", xlevels = list(e_rank_b=c(e_rank_mean-4.2, e_rank_mean+4.2)), mod=mod_3_interation)
+interaction_data_i <- data.frame(e_rank_b)
+interaction_data_i$Independent <- as.factor(interaction_data_i$Independent)
+interaction_data_i$e_rank_b <- as.factor(interaction_data_i$e_rank_b)
+```
+#graph 
+```
+ggplot(interaction_data_i, aes(x=Independent, y=fit, color=e_rank_b, group=e_rank_b)) + 
+  geom_point() + 
+  geom_line(size=1.2) +
+  geom_ribbon(aes(ymin=fit-se, ymax=fit+se, fill=e_rank_b),alpha=0.1) + 
+  labs(title = "Social Mobility and Voter Turnout: Independents", x= "Independent (0=No, 1=Yes)", y="Voter Turnout", color="Social Mobility", fill="Social Mobility") + theme_classic() + theme(text=element_text(size=12))
+```
+#repeat process for Democrat
+
+#Democrat Interaction
+```
+describe(thesis_data$e_rank_b)
+e_rank_mean <- mean(thesis_data$e_rank_b, na.rm=TRUE)
+e_rank_b <- effect(term="e_rank_b*Democrat", xlevels = list(e_rank_b=c(e_rank_mean-4.2, e_rank_mean+4.2)), mod=mod_3_interation)
+interaction_data_i <- data.frame(e_rank_b)
+interaction_data_i$Democrat <- as.factor(interaction_data_i$Democrat)
+interaction_data_i$e_rank_b <- as.factor(interaction_data_i$e_rank_b)
+```
+#graph
+```
+ggplot(interaction_data_i, aes(x=Democrat, y=fit, color=e_rank_b, group=e_rank_b)) + 
+  geom_point() + 
+  geom_line(size=1.2) +
+  geom_ribbon(aes(ymin=fit-se, ymax=fit+se, fill=e_rank_b),alpha=0.1) + 
+  labs(title = "Social Mobility and Voter Turnout: Democrats", x= "Democrats (0=No, 1=Yes)", y="Voter Turnout", color="Social Mobility", fill="Social Mobility") + theme_classic() + theme(text=element_text(size=12))
+```
+
+#END
